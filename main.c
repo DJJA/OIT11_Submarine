@@ -7,13 +7,16 @@
 #define DISPLAY_ORIGIN_X 89
 #define DISPLAY_ORIGIN_Y 64
 #define SONAR_RADIUS 50
-#define SONAR_ROTATION_SPEED 5
+#define SONAR_ROTATION_SPEED 4
 // Other defines
 #define ATTACK_SPEED 10
 #define WHEEL_DIAMETER 56	// milimeter
 // Margins
-#define MARGIN_DISTANCE 2
-#define MARGIN_ANGLE 3
+#define MARGIN_DISTANCE 10
+#define MARGIN_ANGLE 0
+
+#define MAX_DISTANCE 30
+
 
 struct ObjectLocation{
 	long degrees;
@@ -63,9 +66,19 @@ void searchPhase(){
 	//playSound(soundBeepBeep);
 	// Reset the gyro, otherwise it won't be 0
 	waitForButtonPress();
+	displayCenteredBigTextLine(1, "Resetting gyro...");
+	displayCenteredBigTextLine(3, "4");
 	sleep(1000);
 	resetGyro(SENSOR_GYRO);								// Might want to wait after reseting for more accuracy ...
+	displayCenteredBigTextLine(3, "3");
 	sleep(1000);
+	getGyroRate(SENSOR_GYRO);
+	displayCenteredBigTextLine(3, "2");
+	sleep(1000);
+	getGyroDegrees(SENSOR_GYRO);
+	displayCenteredBigTextLine(3, "1");
+	sleep(1000);
+	eraseDisplay();
 	//sleep(2000);
 	//getGyroDegrees(SENSOR_GYRO);
 	//sleep(2000);
@@ -77,16 +90,26 @@ void searchPhase(){
 	setMotorSync(MOTOR_LEFT, MOTOR_RIGHT, 100, SONAR_ROTATION_SPEED);
 	// Start reading gyrosensor
 	bool onObject = false;
-	int count = 0;
-	while(mTargetsDetected < 10 && getGyroDegrees(SENSOR_GYRO) < 360)
+	//int count = 0;
+	float distance = getUSDistance(SENSOR_ULTRASONIC);
+	long angle = getGyroDegrees(SENSOR_GYRO);
+	while(mTargetsDetected < 10 && angle < 360)
 	{
-		//sleep(1000);
-		displayCenteredBigTextLine(3, "%d", mTargetsDetected);
-		displayCenteredBigTextLine(1, "%d", count++);
 		// Read ultrasoon sensor out
-		float distance = getUSDistance(SENSOR_ULTRASONIC);
+
+		//sleep(1000);
+		displayCenteredBigTextLine(1, "nTargets: %d", mTargetsDetected);
+		//displayCenteredBigTextLine(1, "%d", count++);
+		if(mTargetsDetected > 0)
+		{
+			displayCenteredBigTextLine(7, "L.ANGLE: %d", mTargets[mTargetsDetected-1].degrees);
+			displayCenteredBigTextLine(9, "L.DISTANCE: %f", mTargets[mTargetsDetected-1].distance);
+		}
+		displayCenteredBigTextLine(3, "C.ANGLE: %d", angle);
+		displayCenteredBigTextLine(5, "C.DISTANCE: %f", distance);
+
 		//displayCenteredBigTextLine(3, "%f", distance);
-		if(distance <= 30)	// Object is in attacking range
+		if(distance <= MAX_DISTANCE)	// Object is in attacking range
 		{
 			if(!onObject)	// We were not already seeing an object
 			{
@@ -112,6 +135,8 @@ void searchPhase(){
 		}
 		//drawSonar(getGyroDegrees(SENSOR_GYRO));
 		//sleep(.5);
+		angle = getGyroDegrees(SENSOR_GYRO);
+		distance = getUSDistance(SENSOR_ULTRASONIC);
 	}
 
 	// Turn motors off
@@ -146,25 +171,40 @@ void attackPhase(){
 		//playSound(soundBlip);
 		// Turn to the object
 		//		Turn on the motors
-		displayCenteredBigTextLine(1, "INDEX: %d", iTarget);
+		displayCenteredBigTextLine(1, "Target %d / %d", mEliminatedTargetsCount+1, mTargetsDetected);
 		displayCenteredBigTextLine(3, "ANGLE: %d", mTargets[iTarget].degrees);
-		displayCenteredBigTextLine(5, "DIS: %f", mTargets[iTarget].distance);
+		displayCenteredBigTextLine(7, "DIS: %f", mTargets[iTarget].distance);
 
+		int rotationSpeed;
 		// Determine turn direction
 		if(getGyroDegrees(SENSOR_GYRO) < mTargets[iTarget].degrees)
-			setMotorSync(MOTOR_LEFT, MOTOR_RIGHT, 100, SONAR_ROTATION_SPEED);
+			rotationSpeed = SONAR_ROTATION_SPEED;
 		else
-			setMotorSync(MOTOR_LEFT, MOTOR_RIGHT, 100, SONAR_ROTATION_SPEED*-1);
-		
+			rotationSpeed = -SONAR_ROTATION_SPEED;
+
+		setMotorSync(MOTOR_LEFT, MOTOR_RIGHT, 100, rotationSpeed);
+
 		float distance;
 		long angle;
+		int margin_angle = MARGIN_ANGLE;
+		int reverseDirectionCount = 0;
 		bool onObject = false;
 		while(!onObject){
 			distance = getUSDistance(SENSOR_ULTRASONIC);
 			angle = getGyroDegrees(SENSOR_GYRO);
+			displayCenteredBigTextLine(5, "C.ANGLE: %d", angle);
+			displayCenteredBigTextLine(9, "C.DISTANCE: %d", distance);
 			if(distance >= (mTargets[iTarget].distance - MARGIN_DISTANCE) && distance <= (mTargets[iTarget].distance + MARGIN_DISTANCE) &&		// Check if distance is correct with margin
-			angle >= (mTargets[iTarget].degrees - MARGIN_ANGLE) && angle <= (mTargets[iTarget].degrees + MARGIN_ANGLE))							// Check if angle is correct with margin
+			angle >= (mTargets[iTarget].degrees - margin_angle) && angle <= (mTargets[iTarget].degrees + margin_angle))							// Check if angle is correct with margin
 				onObject = true;
+			else if((rotationSpeed > 0 && (angle - margin_angle) > mTargets[iTarget].degrees) || (rotationSpeed < 0 && (angle + margin_angle) < mTargets[iTarget].degrees))	// If it's turning clockwise and the c.angle - margin is bigger than the object angle -> object passed
+			{																																																																								// or if it's turning counterclockwise and the c.angle + margin is smaller than the object angle -> object passed
+				// Turn into the other direction, we've passed the object
+				rotationSpeed *= -1;
+				setMotorSync(MOTOR_LEFT, MOTOR_RIGHT, 100, rotationSpeed);
+				margin_angle = MARGIN_ANGLE + reverseDirectionCount;
+				reverseDirectionCount++;
+			}
 		}
 		//		Turn motors off
 		/*setMotorSpeed(MOTOR_LEFT, 0);
@@ -176,10 +216,11 @@ void attackPhase(){
 		resetMotorEncoder(MOTOR_LEFT);
 		resetMotorEncoder(MOTOR_RIGHT);
 		sleep(1000);
-		/*setMotorSpeed(MOTOR_LEFT, ATTACK_SPEED);
-		setMotorSpeed(MOTOR_RIGHT, ATTACK_SPEED);*/
-		setMotorSync(MOTOR_LEFT, MOTOR_RIGHT, 0, ATTACK_SPEED);
+		setMotorSpeed(MOTOR_LEFT, ATTACK_SPEED);
+		setMotorSpeed(MOTOR_RIGHT, ATTACK_SPEED);
+		//setMotorSync(MOTOR_LEFT, MOTOR_RIGHT, 0, ATTACK_SPEED);
 		while(calculateDrivenDistance() < distance) {}
+		//while(getUSDistance(SENSOR_ULTRASONIC) > 5){}
 		setMotorSync(MOTOR_LEFT, MOTOR_RIGHT, 0, 0);
 		// *Asume we've knocked over the target*
 		// Drive back to origin
@@ -188,6 +229,7 @@ void attackPhase(){
 		sleep(1000);
 		setMotorSync(MOTOR_LEFT, MOTOR_RIGHT, 0, -ATTACK_SPEED); // set to -1* if error
 		while(calculateDrivenDistance() > 0) {}
+		//while(((getMotorEncoder(MOTOR_LEFT) + getMotorEncoder(MOTOR_RIGHT))/2) > 0){}
 		setMotorSync(MOTOR_LEFT, MOTOR_RIGHT, 0, 0);
 		// Add target to the eliminated targets list
 		mEliminatedTargets[mEliminatedTargetsCount] = iTarget;
